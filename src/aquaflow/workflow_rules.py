@@ -22,7 +22,7 @@ from .pumps.schedule import Hist, Pump, choose as choose_pumps
 from .regulatory.rolling import Reading, average
 from .reservoir.turnover import State, project_age
 from .treatment.backwash import Filter, choose as choose_filter
-from .treatment.chlorine_ct import Segment, effective_ct
+from .treatment.chlorine_ct import REFERENCE_TEMPERATURE_C, Segment, effective_ct, temperature_factor
 from .treatment.coagulant import Jar, recommend
 from .work.confined import Permit, valid
 
@@ -36,12 +36,12 @@ def _dt(value: Any) -> datetime:
 def evaluate(name: str, p: dict[str, Any]) -> dict[str, Any]:
     """Evaluate one workflow and return a stable decision plus evidence."""
     if name == "ct_assurance":
-        rows = [Segment(float(x["minutes"]), float(x["residual"]), float(x["baffling"]), float(p.get("_temperature_override", x["temperature_c"]))) for x in p["segments"]]
+        rows = [Segment(float(x["minutes"]), float(x["residual"]), float(x["baffling"]), float(x["temperature_c"])) for x in p["segments"]]
         ct = effective_ct(rows)
         dose = p["dose"]
         low, high = float(dose["low_limit"]), float(dose["high_limit"])
         residual_ok = low <= float(dose["mg_l"]) <= high
-        return {"decision": "release" if residual_ok and ct >= float(p.get("required", 0)) else "hold", "value": ct, "evidence": {"ct": ct, "residual_ok": residual_ok}}
+        return {"decision": "release" if residual_ok and ct >= float(p.get("required", 0)) else "hold", "value": ct, "evidence": {"ct": ct, "residual_ok": residual_ok, "temperatures_c": [r.temperature_c for r in rows], "temperature_factors": [temperature_factor(r.temperature_c) for r in rows], "reference_temperature_c": REFERENCE_TEMPERATURE_C}}
     if name == "coagulant_match":
         target = p["target"]
         jars = [Jar(float(x["raw_ntu"]), float(x["alkalinity"]), float(x["temp"]), float(x["dose"]), float(x["settled_ntu"])) for x in p["jars"]]
