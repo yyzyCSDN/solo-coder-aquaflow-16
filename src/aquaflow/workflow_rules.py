@@ -22,7 +22,7 @@ from .pumps.schedule import Hist, Pump, choose as choose_pumps
 from .regulatory.rolling import Reading, average
 from .reservoir.turnover import State, project_age
 from .treatment.backwash import Filter, choose as choose_filter
-from .treatment.chlorine_ct import Segment, effective_ct
+from .treatment.chlorine_ct import REFERENCE_TEMPERATURE_C, Segment, effective_ct, segment_ct, temperature_factor
 from .treatment.coagulant import Jar, recommend
 from .work.confined import Permit, valid
 
@@ -36,12 +36,51 @@ def _dt(value: Any) -> datetime:
 def evaluate(name: str, p: dict[str, Any]) -> dict[str, Any]:
     """Evaluate one workflow and return a stable decision plus evidence."""
     if name == "ct_assurance":
-        rows = [Segment(float(x["minutes"]), float(x["residual"]), float(x["baffling"]), float(p.get("_temperature_override", x["temperature_c"]))) for x in p["segments"]]
+        rows = []
+        segment_evidence = []
+        for index, x in enumerate(p["segments"]):
+            try:
+                segment = Segment(float(x["minutes"]), float(x["residual"]), float(x["baffling"]), float(x["temperature_c"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid contact segment {index}: {exc}") from exc
+            # segment_ct rejects illegal contact time, residual, baffling or temperature
+            rows.append(segment)
+            segment_evidence.append({
+                "minutes": segment.minutes,
+                "residual": segment.residual,
+                "baffling": segment.baffling,
+                "temperature_c": segment.temperature_c,
+                "temperature_factor": temperature_factor(segment.temperature_c),
+                "ct": segment_ct(segment),
+            })
         ct = effective_ct(rows)
         dose = p["dose"]
         low, high = float(dose["low_limit"]), float(dose["high_limit"])
-        residual_ok = low <= float(dose["mg_l"]) <= high
-        return {"decision": "release" if residual_ok and ct >= float(p.get("required", 0)) else "hold", "value": ct, "evidence": {"ct": ct, "residual_ok": residual_ok}}
+        if low >= high:
+            raise ValueError("dose envelope: low_limit must be below high_limit")
+        residual = float(dose["mg_l"])
+        residual_low = residual < low
+        residual_high = residual > high
+        # low and high limits are checked independently; only an in-range dose passes
+        residual_ok = not residual_low and not residual_high
+        required = float(p.get("required", 0))
+        if required < 0:
+            raise ValueError("required CT must be non-negative")
+        ct_ok = ct >= required
+        return {
+            "decision": "release" if residual_ok and ct_ok else "hold",
+            "value": ct,
+            "evidence": {
+                "ct": ct,
+                "required_ct": required,
+                "ct_ok": ct_ok,
+                "residual_ok": residual_ok,
+                "residual_low": residual_low,
+                "residual_high": residual_high,
+                "reference_temperature_c": REFERENCE_TEMPERATURE_C,
+                "segments": segment_evidence,
+            },
+        }
     if name == "coagulant_match":
         target = p["target"]
         jars = [Jar(float(x["raw_ntu"]), float(x["alkalinity"]), float(x["temp"]), float(x["dose"]), float(x["settled_ntu"])) for x in p["jars"]]

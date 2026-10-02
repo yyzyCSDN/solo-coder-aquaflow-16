@@ -19,6 +19,10 @@ class WorkflowService:
             "contract": envelope.payload["_contract"],
             "required_fields": list(envelope.payload["_required"]),
             "received_at": envelope.received_at.isoformat(),
+            "evidence_keys": sorted(result["evidence"]),
+            "input_snapshot": {
+                key: value for key, value in envelope.payload.items() if not key.startswith("_")
+            },
             "components": ["workflow_models", "workflow_rules", "workflow_service"],
         }
         return result
